@@ -1,17 +1,23 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::sync::Arc;
 
+use ahash::AHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crossbeam_channel::{Receiver, Sender};
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::errors::HprofSlurpError;
 use crate::errors::HprofSlurpError::*;
 use crate::parser::file_header_parser::{parse_file_header, FileHeader};
+use crate::parser::gc_record::{ClassDumpFields, FieldType, FieldValue, GcRecord};
 use crate::parser::record::Record;
+use crate::parser::record_parser::parse_field_value;
 use crate::parser::record_stream_parser::HprofRecordStreamParser;
 use crate::prefetch_reader::PrefetchReader;
-use crate::result_recorder::{RenderedResult, ResultRecorder};
+use crate::result_recorder::{Instance, RenderedResult, ResultRecorder};
 use crate::utils::pretty_bytes_size;
 
 // the exact size of the file header (31 bytes)
@@ -20,12 +26,7 @@ const FILE_HEADER_LENGTH: usize = 31;
 // 64 MB buffer performs nicely (higher is faster but increases the memory consumption)
 pub const READ_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
-pub fn slurp_file(
-    file_path: String,
-    top: usize,
-    debug_mode: bool,
-    list_strings: bool,
-) -> Result<RenderedResult, HprofSlurpError> {
+pub fn slurp_file(file_path: String) -> Result<ResultRecorder, HprofSlurpError> {
     let file = File::open(file_path)?;
     let file_len = file.metadata()?.len() as usize;
     let mut reader = BufReader::new(file);
@@ -63,7 +64,7 @@ pub fn slurp_file(
         crossbeam_channel::unbounded();
 
     // Communication channel from recorder to main
-    let (send_result, receive_result): (Sender<RenderedResult>, Receiver<RenderedResult>) =
+    let (send_result, receive_result): (Sender<ResultRecorder>, Receiver<ResultRecorder>) =
         crossbeam_channel::unbounded();
 
     // Communication channel from parser to main
@@ -81,12 +82,8 @@ pub fn slurp_file(
 
     // Init stream parser
     let initial_loop_buffer = Vec::with_capacity(READ_BUFFER_SIZE); // will be added to the data pool after the first chunk
-    let stream_parser = HprofRecordStreamParser::new(
-        debug_mode,
-        file_len,
-        FILE_HEADER_LENGTH,
-        initial_loop_buffer,
-    );
+    let stream_parser =
+        HprofRecordStreamParser::new(file_len, FILE_HEADER_LENGTH, initial_loop_buffer);
 
     // Start stream parser
     let parser_thread = stream_parser.start(
@@ -98,7 +95,7 @@ pub fn slurp_file(
     )?;
 
     // Init result recorder
-    let result_recorder = ResultRecorder::new(id_size, list_strings, top);
+    let result_recorder = ResultRecorder::new(id_size);
     let recorder_thread = result_recorder.start(receive_records, send_result, send_pooled_vec)?;
 
     // Init progress bar
@@ -113,14 +110,14 @@ pub fn slurp_file(
         pb.set_position(processed as u64)
     }
 
-    // Finish and remove progress bar
+    pb.set_position(99);
     pb.finish_and_clear();
-
     // Wait for final result
-    let rendered_result = receive_result
+    let mut result = receive_result
         .recv()
         .expect("result channel should be alive");
 
+    parse_instance(&mut result);
     // Blocks until pre-fetcher is done
     prefetch_thread
         .join()
@@ -136,9 +133,12 @@ pub fn slurp_file(
         .join()
         .map_err(|e| HprofSlurpError::StdThreadError { e })?;
 
-    Ok(rendered_result)
+    // Finish and remove progress bar
+
+    Ok(result)
 }
 
+//TODO: support 32bits
 pub fn slurp_header(reader: &mut BufReader<File>) -> Result<FileHeader, HprofSlurpError> {
     let mut header_buffer = vec![0; FILE_HEADER_LENGTH];
     reader.read_exact(&mut header_buffer)?;
@@ -161,67 +161,71 @@ pub fn slurp_header(reader: &mut BufReader<File>) -> Result<FileHeader, HprofSlu
     Ok(header)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
+fn parse_instance(result: &mut ResultRecorder) {
+    let instance: HashMap<u64, Arc<Instance>> = result
+        .dump_instances
+        .par_iter()
+        .map(|ele| {
+            if let GcRecord::InstanceDump {
+                object_id,
+                stack_trace_serial_number,
+                class_object_id,
+                data_size,
+                data_bytes,
+            } = ele
+            {
+                if let Some(class) = result.classes_dump.get(class_object_id) {
+                    let (a, b) = parse_instance_data(class, data_bytes, result);
 
-    const FILE_PATH_32: &str = "test-heap-dumps/hprof-32.bin";
-
-    const FILE_PATH_64: &str = "test-heap-dumps/hprof-64.bin";
-    const FILE_PATH_RESULT_64: &str = "test-heap-dumps/hprof-64-result.txt";
-
-    fn validate_gold_rendered_result(result: RenderedResult, gold_path: &str) {
-        let gold = fs::read_to_string(gold_path).expect("gold file not found!");
-        let expected = format!(
-            "{}\n{}\n{}",
-            result.summary, result.thread_info, result.memory_usage
-        );
-        let mut expected_lines = expected.lines();
-        for (i1, l1) in gold.lines().enumerate() {
-            let l2 = expected_lines.next().unwrap();
-            if l1.trim_end() != l2.trim_end() {
-                println!("## GOLD line {} ##", i1 + 1);
-                println!("{}", l1.trim_end());
-                println!("## ACTUAL ##");
-                println!("{}", l2.trim_end());
-                println!("#####");
-                assert_eq!(l1, l2)
+                    let instance = Instance {
+                        object_id: *object_id,
+                        stack_trace_serial_number: *stack_trace_serial_number,
+                        class_object_id: *class_object_id,
+                        data_size: *data_size,
+                        fields: a,
+                        super_fields: b,
+                    };
+                    Some((*object_id, Arc::new(instance)))
+                } else {
+                    None
+                }
+            } else {
+                None
             }
-        }
+        })
+        .filter(|e| e.is_some())
+        .map(|e| e.unwrap())
+        .collect();
+    println!("parse instance done, instance cnt: {}", instance.len());
+}
+
+fn parse_instance_data(
+    class: &ClassDumpFields,
+    data_bytes: &[u8],
+    result: &ResultRecorder,
+) -> (AHashMap<String, FieldValue>, AHashMap<String, FieldValue>) {
+    let mut data_pt = data_bytes;
+    let mut fields_with_name: AHashMap<String, FieldValue> = AHashMap::new();
+    let mut super_fields_with_name: AHashMap<String, FieldValue> = AHashMap::new();
+    for fields in &class.instance_fields {
+        let name = if let Some(field_name) = result.utf8_strings_by_id.get(&fields.name_id) {
+            field_name.to_string()
+        } else {
+            "UNKNOWN".to_string()
+        };
+
+        let parser = parse_field_value(fields.field_type);
+        let (remaining, value) = parser(data_pt).unwrap();
+        data_pt = remaining;
+        fields_with_name.insert(name, value);
     }
 
-    #[test]
-    fn unsupported_32_bits() {
-        let file_path = FILE_PATH_32.to_string();
-        let result = slurp_file(file_path, 20, false, false);
-        assert!(result.is_err());
+    //super class, merged
+    if let Some(super_class) = result.classes_dump.get(&class.super_class_object_id) {
+        let (this, s) = parse_instance_data(super_class, data_pt, result);
+        super_fields_with_name.extend(this);
+        super_fields_with_name.extend(s);
     }
 
-    #[test]
-    fn supported_64_bits() {
-        let file_path = FILE_PATH_64.to_string();
-        let result = slurp_file(file_path, 20, false, false);
-        assert!(result.is_ok());
-        validate_gold_rendered_result(result.unwrap(), FILE_PATH_RESULT_64);
-    }
-
-    #[test]
-    fn file_header_32_bits() {
-        let file_path = FILE_PATH_32.to_string();
-        let file = File::open(file_path).unwrap();
-        let mut reader = BufReader::new(file);
-        let result = slurp_header(&mut reader);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn file_header_64_bits() {
-        let file_path = FILE_PATH_64.to_string();
-        let file = File::open(file_path).unwrap();
-        let mut reader = BufReader::new(file);
-        let file_header = slurp_header(&mut reader).unwrap();
-        assert_eq!(file_header.size_pointers, 8);
-        assert_eq!(file_header.format, "JAVA PROFILE 1.0.1".to_string());
-    }
+    (fields_with_name, super_fields_with_name)
 }

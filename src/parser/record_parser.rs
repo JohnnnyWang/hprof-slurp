@@ -47,14 +47,12 @@ const TAG_GC_PRIM_ARRAY_DUMP: u8 = 0x23;
 const ID_SIZE: u32 = 8;
 
 pub struct HprofRecordParser {
-    debug_mode: bool,
     heap_dump_remaining_len: u32,
 }
 
 impl HprofRecordParser {
-    pub fn new(debug_mode: bool) -> Self {
+    pub fn new() -> Self {
         HprofRecordParser {
-            debug_mode,
             heap_dump_remaining_len: 0,
         }
     }
@@ -64,9 +62,6 @@ impl HprofRecordParser {
         |i| {
             if self.heap_dump_remaining_len == 0 {
                 parse_u8(i).and_then(|(r1, tag)| {
-                    if self.debug_mode {
-                        println!("Found record tag:{} remaining bytes:{}", tag, i.len());
-                    }
                     match tag {
                         TAG_STRING => parse_utf8_string(r1),
                         TAG_LOAD_CLASS => parse_load_class(r1),
@@ -248,7 +243,7 @@ fn parse_gc_root_monitor_used(i: &[u8]) -> IResult<&[u8], GcRecord> {
     map(parse_id, |object_id| RootMonitorUsed { object_id })(i)
 }
 
-fn parse_field_value(ty: FieldType) -> impl Fn(&[u8]) -> IResult<&[u8], FieldValue> {
+pub fn parse_field_value(ty: FieldType) -> impl Fn(&[u8]) -> IResult<&[u8], FieldValue> {
     move |i| match ty {
         FieldType::Object => map(parse_id, FieldValue::Object)(i),
         FieldType::Bool => map(parse_u8, |bu8| FieldValue::Bool(bu8 != 0))(i),
@@ -410,7 +405,7 @@ fn parse_gc_instance_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
     flat_map(
         tuple((parse_id, parse_u32, parse_id, parse_u32)),
         |(object_id, stack_trace_serial_number, class_object_id, data_size)| {
-            map(bytes::streaming::take(data_size), move |_bytes_segment| {
+            map(bytes::streaming::take(data_size), move |bytes_segment| {
                 // Important: The actual content of the instance cannot be analyzed at this point because we miss the class information!
                 // Given that instances are found before the class info in the dump file, it would require two passes on the
                 // dump file with the additional storage of intermediary results on the disk to fully analyze the instances.
@@ -420,6 +415,7 @@ fn parse_gc_instance_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
                     stack_trace_serial_number,
                     class_object_id,
                     data_size,
+                    data_bytes: Vec::from(bytes_segment),
                 }
             })
         },
@@ -432,7 +428,7 @@ fn parse_gc_object_array_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
         |(object_id, stack_trace_serial_number, number_of_elements, array_class_id)| {
             map(
                 bytes::streaming::take(number_of_elements * ID_SIZE),
-                move |_byte_array_elements| {
+                move |byte_array_elements| {
                     // Do not parse the array of object references as it is not needed for any analyses so far.
                     // see `count(parse_id, number_of_elements as usize)(byte_array_elements)`
                     ObjectArrayDump {
@@ -440,6 +436,7 @@ fn parse_gc_object_array_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
                         stack_trace_serial_number,
                         number_of_elements,
                         array_class_id,
+                        data_bytes: Vec::from(byte_array_elements),
                     }
                 },
             )
@@ -455,11 +452,12 @@ fn parse_gc_primitive_array_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
             // see `parse_array_value(element_type, number_of_elements)`
             map(
                 skip_array_value(element_type, number_of_elements),
-                move |_data_array_elements| PrimitiveArrayDump {
+                move |data_array_elements| PrimitiveArrayDump {
                     object_id,
                     stack_trace_serial_number,
                     number_of_elements,
                     element_type,
+                    data_bytes: Vec::from(data_array_elements),
                 },
             )
         },

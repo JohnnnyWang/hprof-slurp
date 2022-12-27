@@ -12,7 +12,6 @@ use std::thread::JoinHandle;
 
 pub struct HprofRecordStreamParser {
     parser: HprofRecordParser,
-    debug_mode: bool,
     file_len: usize,
     processed_len: usize,
     loop_buffer: Vec<u8>,
@@ -21,16 +20,10 @@ pub struct HprofRecordStreamParser {
 }
 
 impl HprofRecordStreamParser {
-    pub fn new(
-        debug_mode: bool,
-        file_len: usize,
-        processed_len: usize,
-        initial_loop_buffer: Vec<u8>,
-    ) -> Self {
-        let parser = HprofRecordParser::new(debug_mode);
+    pub fn new(file_len: usize, processed_len: usize, initial_loop_buffer: Vec<u8>) -> Self {
+        let parser = HprofRecordParser::new();
         HprofRecordStreamParser {
             parser,
-            debug_mode,
             file_len,
             processed_len,
             loop_buffer: initial_loop_buffer,
@@ -97,9 +90,7 @@ impl HprofRecordStreamParser {
                                     }
                                 }
                                 Err(Err::Incomplete(Size(n))) => {
-                                    if self.debug_mode {
-                                        println!("Incomplete: {} bytes required to finish parsing object & current buffer len {}", n.get(), self.loop_buffer.len());
-                                    }
+                                
                                     // capture needed data (missing + existing)
                                     self.needed = n.get() + self.loop_buffer.len();
                                 }

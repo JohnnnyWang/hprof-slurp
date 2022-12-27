@@ -41,7 +41,7 @@ pub struct StackTraceData {
     pub stack_frame_ids: Vec<u64>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default,Clone)]
 pub struct LoadClassData {
     pub serial_number: u32,
     pub class_object_id: u64,

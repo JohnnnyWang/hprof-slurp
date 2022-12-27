@@ -1,7 +1,9 @@
 use ahash::AHashMap;
 use crossbeam_channel::{Receiver, Sender};
 use indoc::formatdoc;
+use std::collections::HashMap;
 use std::ops::Deref;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::{mem, thread};
 
@@ -74,56 +76,68 @@ pub struct RenderedResult {
     pub captured_strings: Option<String>,
 }
 
+pub struct Instance {
+   pub object_id: u64,
+   pub stack_trace_serial_number: u32,
+   pub class_object_id: u64,
+   pub data_size: u32,
+   pub fields: AHashMap<String, FieldValue>,
+   pub super_fields: AHashMap<String, FieldValue>,
+}
+
 pub struct ResultRecorder {
-    id_size: u32,
-    list_strings: bool,
-    top: usize,
+    pub id_size: u32,
     // Tag counters
-    classes_unloaded: i32,
-    stack_frames: i32,
-    stack_traces: i32,
-    start_threads: i32,
-    end_threads: i32,
-    heap_summaries: i32,
-    heap_dumps: i32,
-    allocation_sites: i32,
-    control_settings: i32,
-    cpu_samples: i32,
+    pub classes_unloaded: i32,
+    pub stack_frames: i32,
+    pub stack_traces: i32,
+    pub start_threads: i32,
+    pub end_threads: i32,
+    pub heap_summaries: i32,
+    pub heap_dumps: i32,
+    pub allocation_sites: i32,
+    pub control_settings: i32,
+    pub cpu_samples: i32,
     // GC tag counters
-    heap_dump_segments_all_sub_records: i32,
-    heap_dump_segments_gc_root_unknown: i32,
-    heap_dump_segments_gc_root_thread_object: i32,
-    heap_dump_segments_gc_root_jni_global: i32,
-    heap_dump_segments_gc_root_jni_local: i32,
-    heap_dump_segments_gc_root_java_frame: i32,
-    heap_dump_segments_gc_root_native_stack: i32,
-    heap_dump_segments_gc_root_sticky_class: i32,
-    heap_dump_segments_gc_root_thread_block: i32,
-    heap_dump_segments_gc_root_monitor_used: i32,
-    heap_dump_segments_gc_object_array_dump: i32,
-    heap_dump_segments_gc_instance_dump: i32,
-    heap_dump_segments_gc_primitive_array_dump: i32,
-    heap_dump_segments_gc_class_dump: i32,
+    pub heap_dump_segments_all_sub_records: i32,
+    pub heap_dump_segments_gc_root_unknown: i32,
+    pub heap_dump_segments_gc_root_thread_object: i32,
+    pub heap_dump_segments_gc_root_jni_global: i32,
+    pub heap_dump_segments_gc_root_jni_local: i32,
+    pub heap_dump_segments_gc_root_java_frame: i32,
+    pub heap_dump_segments_gc_root_native_stack: i32,
+    pub heap_dump_segments_gc_root_sticky_class: i32,
+    pub heap_dump_segments_gc_root_thread_block: i32,
+    pub heap_dump_segments_gc_root_monitor_used: i32,
+    pub heap_dump_segments_gc_object_array_dump: i32,
+    pub heap_dump_segments_gc_instance_dump: i32,
+    pub heap_dump_segments_gc_primitive_array_dump: i32,
+    pub heap_dump_segments_gc_class_dump: i32,
     // Captured state
     // "object_id" -> "class_id" -> "class_name_id" -> "utf8_string"
-    utf8_strings_by_id: AHashMap<u64, Box<str>>,
-    class_data: Vec<LoadClassData>,         // holds class_data
-    class_data_by_id: AHashMap<u64, usize>, // value is index into class_data
-    class_data_by_serial_number: AHashMap<u32, usize>, // value is index into class_data
-    classes_single_instance_size_by_id: AHashMap<u64, ClassInfo>,
-    classes_all_instance_total_size_by_id: AHashMap<u64, ClassInstanceCounter>,
-    primitive_array_counters: AHashMap<FieldType, ArrayCounter>,
-    object_array_counters: AHashMap<u64, ArrayCounter>,
-    stack_trace_by_serial_number: AHashMap<u32, StackTraceData>,
-    stack_frame_by_id: AHashMap<u64, StackFrameData>,
+    pub utf8_strings_by_id: AHashMap<u64, Box<str>>,
+    pub class_data: Vec<LoadClassData>,         // holds class_data
+    pub class_data_by_id: AHashMap<u64, usize>, // value is index into class_data
+    pub class_data_by_serial_number: AHashMap<u32, usize>, // value is index into class_data
+    pub classes_single_instance_size_by_id: AHashMap<u64, ClassInfo>,
+    pub classes_dump: AHashMap<u64, ClassDumpFields>,
+    pub classes_all_instance_total_size_by_id: AHashMap<u64, ClassInstanceCounter>,
+    pub primitive_array_counters: AHashMap<FieldType, ArrayCounter>,
+    pub object_array_counters: AHashMap<u64, ArrayCounter>,
+    pub stack_trace_by_serial_number: AHashMap<u32, StackTraceData>,
+    pub stack_frame_by_id: AHashMap<u64, StackFrameData>,
+
+    //add
+    pub dump_instances: Vec<GcRecord>,
+    pub instances: AHashMap<u32, Arc<Instance>>,
+
+    pub load_class: AHashMap<u64, LoadClassData>,
 }
 
 impl ResultRecorder {
-    pub fn new(id_size: u32, list_strings: bool, top: usize) -> Self {
+    pub fn new(id_size: u32) -> Self {
         ResultRecorder {
             id_size,
-            list_strings,
-            top,
             classes_unloaded: 0,
             stack_frames: 0,
             stack_traces: 0,
@@ -156,8 +170,12 @@ impl ResultRecorder {
             classes_all_instance_total_size_by_id: AHashMap::new(),
             primitive_array_counters: AHashMap::new(),
             object_array_counters: AHashMap::new(),
+            classes_dump: AHashMap::default(),
             stack_trace_by_serial_number: AHashMap::default(),
             stack_frame_by_id: AHashMap::default(),
+            dump_instances: Vec::default(),
+            instances: AHashMap::default(),
+            load_class: AHashMap::default(),
         }
     }
 
@@ -173,7 +191,7 @@ impl ResultRecorder {
     pub fn start(
         mut self,
         receive_records: Receiver<Vec<Record>>,
-        send_result: Sender<RenderedResult>,
+        send_result: Sender<Self>,
         send_pooled_vec: Sender<Vec<Record>>,
     ) -> std::io::Result<JoinHandle<()>> {
         thread::Builder::new()
@@ -190,18 +208,9 @@ impl ResultRecorder {
                         }
                         Err(_) => {
                             // no more Record to pull, generate and send back results
-                            let rendered_result = RenderedResult {
-                                summary: self.render_summary(),
-                                thread_info: self.render_thread_info(),
-                                memory_usage: self.render_memory_usage(self.top),
-                                captured_strings: if self.list_strings {
-                                    Some(self.render_captured_strings())
-                                } else {
-                                    None
-                                },
-                            };
+
                             send_result
-                                .send(rendered_result)
+                                .send(self)
                                 .expect("channel should not be closed");
                             break;
                         }
@@ -217,12 +226,15 @@ impl ResultRecorder {
             }
             LoadClass(load_class_data) => {
                 let class_object_id = load_class_data.class_object_id;
-                let class_serial_number = load_class_data.serial_number;
-                self.class_data.push(mem::take(load_class_data));
-                let data_index = self.class_data.len() - 1;
-                self.class_data_by_id.insert(class_object_id, data_index);
-                self.class_data_by_serial_number
-                    .insert(class_serial_number, data_index);
+                // let class_serial_number = load_class_data.serial_number;
+                // self.class_data.push(mem::take(load_class_data));
+                // let data_index = self.class_data.len() - 1;
+                // self.class_data_by_id.insert(class_object_id, data_index);
+                // self.class_data_by_serial_number
+                //     .insert(class_serial_number, data_index);
+
+                self.load_class
+                    .insert(class_object_id, load_class_data.clone());
             }
             UnloadClass { .. } => self.classes_unloaded += 1,
             StackFrame(stack_frame_data) => {
@@ -270,14 +282,25 @@ impl ResultRecorder {
                         self.heap_dump_segments_gc_root_monitor_used += 1
                     }
                     GcRecord::InstanceDump {
-                        class_object_id, ..
+                        object_id,
+                        stack_trace_serial_number,
+                        class_object_id,
+                        data_size,
+                        data_bytes,
                     } => {
                         self.classes_all_instance_total_size_by_id
                             .entry(*class_object_id)
                             .or_insert_with(ClassInstanceCounter::empty)
                             .add_instance();
 
-                        self.heap_dump_segments_gc_instance_dump += 1
+                        self.heap_dump_segments_gc_instance_dump += 1;
+                        self.dump_instances.push(GcRecord::InstanceDump {
+                            object_id: *object_id,
+                            stack_trace_serial_number: *stack_trace_serial_number,
+                            class_object_id: *class_object_id,
+                            data_size: *data_size,
+                            data_bytes: data_bytes.to_vec(),
+                        });
                     }
                     GcRecord::ObjectArrayDump {
                         number_of_elements,
@@ -305,6 +328,8 @@ impl ResultRecorder {
                     }
                     GcRecord::ClassDump(class_dump_fields) => {
                         let class_object_id = class_dump_fields.class_object_id;
+                        self.classes_dump
+                            .insert(class_object_id, *(*class_dump_fields).clone());
                         self.classes_single_instance_size_by_id
                             .entry(class_object_id)
                             .or_insert_with(|| {
@@ -395,7 +420,7 @@ impl ResultRecorder {
         thread_info
     }
 
-    fn render_memory_usage(&self, top: usize) -> String {
+    fn render_memory_usage(&self) -> String {
         // https://www.baeldung.com/java-memory-layout
         // total_size = object_header + data
         // on a 64-bit arch.
@@ -533,16 +558,16 @@ impl ResultRecorder {
         classes_dump_vec.sort_by(|a, b| b.0.cmp(&a.0));
 
         // Top allocated classes analysis
-        let allocation_classes_title = format!("\nTop {} allocated classes:\n\n", top);
+        // let allocation_classes_title = format!("\nTop {} allocated classes:\n\n", top);
         analysis.push_str(&allocation_classes_title);
         classes_dump_vec.sort_by(|a, b| b.3.cmp(&a.3));
-        ResultRecorder::render_table(self.top, &mut analysis, classes_dump_vec.as_slice());
+        // ResultRecorder::render_table(self.top, &mut analysis, classes_dump_vec.as_slice());
 
         // Top largest instances analysis
-        let allocation_largest_title = format!("\nTop {} largest instances:\n\n", top);
-        analysis.push_str(&allocation_largest_title);
+        // let allocation_largest_title = format!("\nTop {} largest instances:\n\n", top);
+        // analysis.push_str(&allocation_largest_title);
         classes_dump_vec.sort_by(|a, b| b.2.cmp(&a.2));
-        ResultRecorder::render_table(self.top, &mut analysis, classes_dump_vec.as_slice());
+        // ResultRecorder::render_table(self.top, &mut analysis, classes_dump_vec.as_slice());
 
         analysis
     }

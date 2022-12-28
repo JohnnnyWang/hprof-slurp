@@ -23,7 +23,7 @@ pub struct CpuSample {
     pub stack_trace_serial_number: u32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default,Clone)]
 pub struct StackFrameData {
     pub stack_frame_id: u64,
     pub method_name_id: u64,
@@ -33,7 +33,7 @@ pub struct StackFrameData {
     pub line_number: i32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default,Clone)]
 pub struct StackTraceData {
     pub serial_number: u32,
     pub thread_serial_number: u32,

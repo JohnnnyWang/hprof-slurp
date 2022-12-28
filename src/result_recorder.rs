@@ -1,7 +1,7 @@
 use ahash::AHashMap;
 use crossbeam_channel::{Receiver, Sender};
 use indoc::formatdoc;
-use std::collections::HashMap;
+
 use std::ops::Deref;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -75,14 +75,14 @@ pub struct RenderedResult {
     pub memory_usage: String,
     pub captured_strings: Option<String>,
 }
-
+#[derive(Debug, Clone)]
 pub struct Instance {
-   pub object_id: u64,
-   pub stack_trace_serial_number: u32,
-   pub class_object_id: u64,
-   pub data_size: u32,
-   pub fields: AHashMap<String, FieldValue>,
-   pub super_fields: AHashMap<String, FieldValue>,
+    pub object_id: u64,
+    pub stack_trace_serial_number: u32,
+    pub class_object_id: u64,
+    pub data_size: u32,
+    pub fields: AHashMap<String, FieldValue>,
+    pub super_fields: AHashMap<String, FieldValue>,
 }
 
 pub struct ResultRecorder {
@@ -129,7 +129,7 @@ pub struct ResultRecorder {
 
     //add
     pub dump_instances: Vec<GcRecord>,
-    pub instances: AHashMap<u32, Arc<Instance>>,
+    pub instances: AHashMap<u64, Arc<Instance>>,
 
     pub load_class: AHashMap<u64, LoadClassData>,
 }

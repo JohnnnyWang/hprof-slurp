@@ -12,13 +12,14 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use crate::errors::HprofSlurpError;
 use crate::errors::HprofSlurpError::*;
 use crate::parser::file_header_parser::{parse_file_header, FileHeader};
-use crate::parser::gc_record::{ClassDumpFields, FieldType, FieldValue, GcRecord};
+use crate::parser::gc_record::{ClassDumpFields, FieldValue, GcRecord};
 use crate::parser::record::Record;
 use crate::parser::record_parser::parse_field_value;
 use crate::parser::record_stream_parser::HprofRecordStreamParser;
 use crate::prefetch_reader::PrefetchReader;
-use crate::result_recorder::{Instance, RenderedResult, ResultRecorder};
+use crate::result_recorder::{Instance, ResultRecorder};
 use crate::utils::pretty_bytes_size;
+use crate::Heap;
 
 // the exact size of the file header (31 bytes)
 const FILE_HEADER_LENGTH: usize = 31;
@@ -26,7 +27,7 @@ const FILE_HEADER_LENGTH: usize = 31;
 // 64 MB buffer performs nicely (higher is faster but increases the memory consumption)
 pub const READ_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
-pub fn slurp_file(file_path: String) -> Result<ResultRecorder, HprofSlurpError> {
+pub fn slurp_file(file_path: String) -> Result<Heap, HprofSlurpError> {
     let file = File::open(file_path)?;
     let file_len = file.metadata()?.len() as usize;
     let mut reader = BufReader::new(file);
@@ -135,7 +136,7 @@ pub fn slurp_file(file_path: String) -> Result<ResultRecorder, HprofSlurpError> 
 
     // Finish and remove progress bar
 
-    Ok(result)
+    Ok(result.into())
 }
 
 //TODO: support 32bits
@@ -196,7 +197,7 @@ fn parse_instance(result: &mut ResultRecorder) {
         .filter(|e| e.is_some())
         .map(|e| e.unwrap())
         .collect();
-    println!("parse instance done, instance cnt: {}", instance.len());
+    result.instances = AHashMap::from_iter(instance);
 }
 
 fn parse_instance_data(

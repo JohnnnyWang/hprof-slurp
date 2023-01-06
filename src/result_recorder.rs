@@ -81,8 +81,8 @@ pub struct Instance {
     pub stack_trace_serial_number: u32,
     pub class_object_id: u64,
     pub data_size: u32,
-    pub fields: AHashMap<String, FieldValue>,
-    pub super_fields: AHashMap<String, FieldValue>,
+    pub fields: AHashMap<String, Values>,
+    pub super_fields: AHashMap<String, Values>,
 }
 
 pub struct ResultRecorder {
@@ -129,6 +129,7 @@ pub struct ResultRecorder {
 
     //add
     pub dump_instances: Vec<GcRecord>,
+    pub dump_primitive_array_dump: Vec<GcRecord>,
     pub instances: AHashMap<u64, Arc<Instance>>,
 
     pub load_class: AHashMap<u64, LoadClassData>,
@@ -174,6 +175,7 @@ impl ResultRecorder {
             stack_trace_by_serial_number: AHashMap::default(),
             stack_frame_by_id: AHashMap::default(),
             dump_instances: Vec::default(),
+            dump_primitive_array_dump: Vec::default(),
             instances: AHashMap::default(),
             load_class: AHashMap::default(),
         }
@@ -317,14 +319,25 @@ impl ResultRecorder {
                     GcRecord::PrimitiveArrayDump {
                         number_of_elements,
                         element_type,
-                        ..
+                        object_id,
+                        stack_trace_serial_number,
+                        data_bytes,
                     } => {
                         self.primitive_array_counters
                             .entry(*element_type)
                             .or_insert_with(ArrayCounter::empty)
                             .add_elements_from_array(*number_of_elements);
 
-                        self.heap_dump_segments_gc_primitive_array_dump += 1
+                        self.heap_dump_segments_gc_primitive_array_dump += 1;
+
+                        self.dump_primitive_array_dump
+                            .push(GcRecord::PrimitiveArrayDump {
+                                number_of_elements: *number_of_elements,
+                                element_type: *element_type,
+                                object_id: *object_id,
+                                stack_trace_serial_number: *stack_trace_serial_number,
+                                data_bytes: data_bytes.to_vec(),
+                            });
                     }
                     GcRecord::ClassDump(class_dump_fields) => {
                         let class_object_id = class_dump_fields.class_object_id;

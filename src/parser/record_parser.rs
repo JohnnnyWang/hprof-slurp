@@ -257,9 +257,9 @@ pub fn parse_field_value(ty: FieldType) -> impl Fn(&[u8]) -> IResult<&[u8], Fiel
     }
 }
 
-#[allow(dead_code)]
+
 // could be used in the future to analyze content of largest arrays
-fn parse_array_value(
+pub fn parse_array_value(
     element_type: FieldType,
     number_of_elements: u32,
 ) -> impl Fn(&[u8]) -> IResult<&[u8], ArrayValue> {

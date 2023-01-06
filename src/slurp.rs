@@ -12,9 +12,9 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use crate::errors::HprofSlurpError;
 use crate::errors::HprofSlurpError::*;
 use crate::parser::file_header_parser::{parse_file_header, FileHeader};
-use crate::parser::gc_record::{ClassDumpFields, FieldValue, GcRecord};
+use crate::parser::gc_record::{ClassDumpFields, FieldValue, GcRecord, Values};
 use crate::parser::record::Record;
-use crate::parser::record_parser::parse_field_value;
+use crate::parser::record_parser::{parse_array_value, parse_field_value};
 use crate::parser::record_stream_parser::HprofRecordStreamParser;
 use crate::prefetch_reader::PrefetchReader;
 use crate::result_recorder::{Instance, ResultRecorder};
@@ -197,17 +197,53 @@ fn parse_instance(result: &mut ResultRecorder) {
         .filter(|e| e.is_some())
         .map(|e| e.unwrap())
         .collect();
+
+    let instance_primitive_array_dump: HashMap<u64, Arc<Instance>> = result
+        .dump_primitive_array_dump
+        .par_iter()
+        .map(|ele| {
+            if let GcRecord::PrimitiveArrayDump {
+                object_id,
+                stack_trace_serial_number,
+                number_of_elements,
+                element_type,
+                data_bytes,
+            } = ele
+            {
+                let (_, value) =
+                    parse_array_value(element_type.clone(), *number_of_elements)(&data_bytes)
+                        .unwrap();
+                let mut fields = AHashMap::default();
+                fields.insert("".to_string(), Values::Array(value));
+
+                let instance = Instance {
+                    object_id: *object_id,
+                    stack_trace_serial_number: *stack_trace_serial_number,
+                    class_object_id: element_type.to_u64(),
+                    data_size: data_bytes.len() as u32,
+                    fields,
+                    super_fields: AHashMap::default(),
+                };
+                Some((*object_id, Arc::new(instance)))
+            } else {
+                None
+            }
+        })
+        .filter(|e| e.is_some())
+        .map(|e| e.unwrap())
+        .collect();
     result.instances = AHashMap::from_iter(instance);
+    result.instances.extend(instance_primitive_array_dump);
 }
 
 fn parse_instance_data(
     class: &ClassDumpFields,
     data_bytes: &[u8],
     result: &ResultRecorder,
-) -> (AHashMap<String, FieldValue>, AHashMap<String, FieldValue>) {
+) -> (AHashMap<String, Values>, AHashMap<String, Values>) {
     let mut data_pt = data_bytes;
-    let mut fields_with_name: AHashMap<String, FieldValue> = AHashMap::new();
-    let mut super_fields_with_name: AHashMap<String, FieldValue> = AHashMap::new();
+    let mut fields_with_name: AHashMap<String, Values> = AHashMap::new();
+    let mut super_fields_with_name: AHashMap<String, Values> = AHashMap::new();
     for fields in &class.instance_fields {
         let name = if let Some(field_name) = result.utf8_strings_by_id.get(&fields.name_id) {
             field_name.to_string()
@@ -218,7 +254,7 @@ fn parse_instance_data(
         let parser = parse_field_value(fields.field_type);
         let (remaining, value) = parser(data_pt).unwrap();
         data_pt = remaining;
-        fields_with_name.insert(name, value);
+        fields_with_name.insert(name, Values::Single(value));
     }
 
     //super class, merged

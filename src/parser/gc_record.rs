@@ -26,20 +26,40 @@ impl FieldType {
             x => panic!("{}", format!("FieldType {} not found", x)),
         }
     }
+    pub fn to_u64(&self)->u64{
+        match self {
+            FieldType::Object => 2,
+            FieldType::Bool => 4,
+            FieldType::Char => 5,
+            FieldType::Float => 6,
+            FieldType::Double => 7,
+            FieldType::Byte => 8,
+            FieldType::Short => 9,
+            FieldType::Int => 10,
+            FieldType::Long => 11,
+        }
+    }
+
+    
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ConstFieldInfo {
     pub const_pool_idx: u16,
     pub const_type: FieldType,
 }
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct FieldInfo {
     pub name_id: u64,
     pub field_type: FieldType,
 }
+#[derive(Debug, Clone)]
+pub enum Values {
+    Single(FieldValue),
+    Array(ArrayValue),
+}
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum FieldValue {
     Bool(bool),
     Byte(i8),
@@ -52,7 +72,7 @@ pub enum FieldValue {
     Object(u64),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ArrayValue {
     Bool(Vec<bool>),
     Byte(Vec<i8>),
@@ -108,26 +128,26 @@ pub enum GcRecord {
         stack_trace_serial_number: u32,
         class_object_id: u64,
         data_size: u32,
-        data_bytes:Vec<u8>
+        data_bytes: Vec<u8>,
     },
     ObjectArrayDump {
         object_id: u64,
         stack_trace_serial_number: u32,
         number_of_elements: u32,
         array_class_id: u64,
-        data_bytes:Vec<u8>
+        data_bytes: Vec<u8>,
     },
     PrimitiveArrayDump {
         object_id: u64,
         stack_trace_serial_number: u32,
         number_of_elements: u32,
         element_type: FieldType,
-        data_bytes:Vec<u8>
+        data_bytes: Vec<u8>,
     },
     ClassDump(Box<ClassDumpFields>), // rare enough to be boxed to avoid large variant cost
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ClassDumpFields {
     pub class_object_id: u64,
     pub stack_trace_serial_number: u32,

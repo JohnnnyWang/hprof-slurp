@@ -12,7 +12,7 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use crate::errors::HprofSlurpError;
 use crate::errors::HprofSlurpError::*;
 use crate::parser::file_header_parser::{parse_file_header, FileHeader};
-use crate::parser::gc_record::{ClassDumpFields, FieldValue, GcRecord, Values};
+use crate::parser::gc_record::{ClassDumpFields, GcRecord, Values};
 use crate::parser::record::Record;
 use crate::parser::record_parser::{parse_array_value, parse_field_value};
 use crate::parser::record_stream_parser::HprofRecordStreamParser;
@@ -118,7 +118,13 @@ pub fn slurp_file(file_path: String) -> Result<Heap, HprofSlurpError> {
         .recv()
         .expect("result channel should be alive");
 
+    println!("Parse instance");
     parse_instance(&mut result);
+
+    println!("Parse instance done... parse vm overview");
+    parser_vm_overview(&result);
+    println!("Parse vm overview done...");
+
     // Blocks until pre-fetcher is done
     prefetch_thread
         .join()
@@ -160,6 +166,25 @@ pub fn slurp_header(reader: &mut BufReader<File>) -> Result<FileHeader, HprofSlu
         return Err(InvalidHeaderSize);
     }
     Ok(header)
+}
+
+fn parser_vm_overview(result: &ResultRecorder) {
+    //start up time
+    if let Some(str_id) = search_str("sun.management.ManagementFactoryHelper", result) {
+        if let Some(cdf) = search_dump_class(str_id, result) {
+            println!("{:?}", cdf);
+        } else {
+            println!("UNKNOWN: sun.management.ManagementFactoryHelper");
+        }
+    }
+
+    if let Some(str_id) = search_str("sun.management.ManagementFactory", result) {
+        if let Some(cdf) = search_dump_class(str_id, result) {
+            println!("{:?}", cdf);
+        } else {
+            println!("UNKNOWN: sun.management.ManagementFactory");
+        }
+    }
 }
 
 fn parse_instance(result: &mut ResultRecorder) {
@@ -232,8 +257,46 @@ fn parse_instance(result: &mut ResultRecorder) {
         .filter(|e| e.is_some())
         .map(|e| e.unwrap())
         .collect();
-    result.instances = AHashMap::from_iter(instance);
+
+    let instance_object_array_dump: HashMap<u64, Arc<Instance>> = result
+        .dump_object_array_dump
+        .par_iter()
+        .map(|ele| {
+            if let GcRecord::ObjectArrayDump {
+                object_id,
+                stack_trace_serial_number,
+                number_of_elements,
+                array_class_id,
+                data_bytes,
+            } = ele
+            {
+                let (_, value) = parse_array_value(
+                    crate::parser::gc_record::FieldType::Object,
+                    *number_of_elements,
+                )(&data_bytes)
+                .unwrap();
+                let mut fields = AHashMap::default();
+                fields.insert("".to_string(), Values::Array(value));
+
+                let instance = Instance {
+                    object_id: *object_id,
+                    stack_trace_serial_number: *stack_trace_serial_number,
+                    class_object_id: *array_class_id,
+                    data_size: data_bytes.len() as u32,
+                    fields,
+                    super_fields: AHashMap::default(),
+                };
+                Some((*object_id, Arc::new(instance)))
+            } else {
+                None
+            }
+        })
+        .filter(|e| e.is_some())
+        .map(|e| e.unwrap())
+        .collect();
+    result.instances = HashMap::from_iter(instance);
     result.instances.extend(instance_primitive_array_dump);
+    result.instances.extend(instance_object_array_dump);
 }
 
 fn parse_instance_data(
@@ -265,4 +328,37 @@ fn parse_instance_data(
     }
 
     (fields_with_name, super_fields_with_name)
+}
+
+fn search_str(str: &str, result: &ResultRecorder) -> Option<u64> {
+    if let Some((id, _)) = result
+        .utf8_strings_by_id
+        .par_iter()
+        .find_first(|(_, v)| v.contains(str))
+    {
+        Some(*id)
+    } else {
+        None
+    }
+}
+
+fn search_dump_class(name_str_id: u64, result: &ResultRecorder) -> Option<ClassDumpFields> {
+    if let Some((k, v)) = result
+        .load_class
+        .par_iter()
+        .find_first(|(k, v)| v.class_name_id == name_str_id)
+    {
+        let obj_id = v.class_object_id;
+        if let Some((_, cdf)) = result
+            .classes_dump
+            .par_iter()
+            .find_first(|(k, v)| v.class_object_id == obj_id)
+        {
+            Some(cdf.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }

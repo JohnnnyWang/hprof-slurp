@@ -23,7 +23,7 @@ pub struct CpuSample {
     pub stack_trace_serial_number: u32,
 }
 
-#[derive(Debug, Default,Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct StackFrameData {
     pub stack_frame_id: u64,
     pub method_name_id: u64,
@@ -33,7 +33,7 @@ pub struct StackFrameData {
     pub line_number: i32,
 }
 
-#[derive(Debug, Default,Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct StackTraceData {
     pub serial_number: u32,
     pub thread_serial_number: u32,
@@ -41,12 +41,34 @@ pub struct StackTraceData {
     pub stack_frame_ids: Vec<u64>,
 }
 
-#[derive(Debug, Default,Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct LoadClassData {
     pub serial_number: u32,
     pub class_object_id: u64,
     pub stack_trace_serial_number: u32,
     pub class_name_id: u64,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ThreadStartData {
+    pub thread_serial_number: u32,
+    pub thread_object_id: u64,
+    pub stack_trace_serial_number: u32,
+    pub thread_name_id: u64,
+    pub thread_group_name_id: u64,
+    pub thread_group_parent_name_id: u64,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ThreadEndData {
+    pub thread_serial_number: u32,
+}
+
+pub struct HeapSummary {
+    pub total_live_bytes: u32,
+    pub total_live_instances: u32,
+    pub total_bytes_allocated: u64,
+    pub total_instances_allocated: u64,
 }
 
 #[derive(Debug)]

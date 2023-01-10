@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, collections::HashMap};
 
 use ahash::AHashMap;
 use parser::{
@@ -19,12 +19,12 @@ pub mod utils;
 pub struct Heap {
     pub counter: HeapCounter,
 
-    pub utf8_strings: AHashMap<u64, Box<str>>,
-    pub class_data: AHashMap<u64, LoadClassData>,
-    pub classes_dump: AHashMap<u64, ClassDumpFields>,
-    pub stack_trace_by_serial_number: AHashMap<u32, StackTraceData>,
-    pub stack_frame_by_id: AHashMap<u64, StackFrameData>,
-    pub instances_pool: AHashMap<u64, Arc<Instance>>,
+    pub utf8_strings: HashMap<u64, Box<str>>,
+    pub class_data: HashMap<u64, LoadClassData>,
+    pub classes_dump: HashMap<u64, ClassDumpFields>,
+    pub stack_trace_by_serial_number: HashMap<u32, StackTraceData>,
+    pub stack_frame_by_id: HashMap<u64, StackFrameData>,
+    pub instances_pool: HashMap<u64, Arc<Instance>>,
 }
 #[derive(Debug, Clone)]
 pub struct HeapCounter {

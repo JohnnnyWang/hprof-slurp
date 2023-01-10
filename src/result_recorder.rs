@@ -2,14 +2,15 @@ use ahash::AHashMap;
 use crossbeam_channel::{Receiver, Sender};
 use indoc::formatdoc;
 
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::{mem, thread};
 
 use crate::parser::gc_record::*;
-use crate::parser::record::Record::*;
 use crate::parser::record::{LoadClassData, Record, StackFrameData, StackTraceData};
+use crate::parser::record::{Record::*, ThreadEndData, ThreadStartData};
 use crate::utils::pretty_bytes_size;
 
 #[derive(Debug, Copy, Clone)]
@@ -115,24 +116,28 @@ pub struct ResultRecorder {
     pub heap_dump_segments_gc_class_dump: i32,
     // Captured state
     // "object_id" -> "class_id" -> "class_name_id" -> "utf8_string"
-    pub utf8_strings_by_id: AHashMap<u64, Box<str>>,
-    pub class_data: Vec<LoadClassData>,         // holds class_data
-    pub class_data_by_id: AHashMap<u64, usize>, // value is index into class_data
-    pub class_data_by_serial_number: AHashMap<u32, usize>, // value is index into class_data
-    pub classes_single_instance_size_by_id: AHashMap<u64, ClassInfo>,
-    pub classes_dump: AHashMap<u64, ClassDumpFields>,
-    pub classes_all_instance_total_size_by_id: AHashMap<u64, ClassInstanceCounter>,
-    pub primitive_array_counters: AHashMap<FieldType, ArrayCounter>,
-    pub object_array_counters: AHashMap<u64, ArrayCounter>,
-    pub stack_trace_by_serial_number: AHashMap<u32, StackTraceData>,
-    pub stack_frame_by_id: AHashMap<u64, StackFrameData>,
+    pub utf8_strings_by_id: HashMap<u64, Box<str>>,
+    pub class_data: Vec<LoadClassData>,        // holds class_data
+    pub class_data_by_id: HashMap<u64, usize>, // value is index into class_data
+    pub class_data_by_serial_number: HashMap<u32, usize>, // value is index into class_data
+    pub classes_single_instance_size_by_id: HashMap<u64, ClassInfo>,
+    pub classes_dump: HashMap<u64, ClassDumpFields>,
+    pub classes_all_instance_total_size_by_id: HashMap<u64, ClassInstanceCounter>,
+    pub primitive_array_counters: HashMap<FieldType, ArrayCounter>,
+    pub object_array_counters: HashMap<u64, ArrayCounter>,
+    pub stack_trace_by_serial_number: HashMap<u32, StackTraceData>,
+    pub stack_frame_by_id: HashMap<u64, StackFrameData>,
 
     //add
     pub dump_instances: Vec<GcRecord>,
     pub dump_primitive_array_dump: Vec<GcRecord>,
-    pub instances: AHashMap<u64, Arc<Instance>>,
+    pub dump_object_array_dump: Vec<GcRecord>,
+    pub instances: HashMap<u64, Arc<Instance>>,
 
-    pub load_class: AHashMap<u64, LoadClassData>,
+    pub load_class: HashMap<u64, LoadClassData>,
+
+    pub thread_start: HashMap<u32, ThreadStartData>,
+    pub thread_end: HashMap<u32, ThreadEndData>,
 }
 
 impl ResultRecorder {
@@ -163,21 +168,24 @@ impl ResultRecorder {
             heap_dump_segments_gc_primitive_array_dump: 0,
             heap_dump_segments_gc_instance_dump: 0,
             heap_dump_segments_gc_class_dump: 0,
-            utf8_strings_by_id: AHashMap::new(),
+            utf8_strings_by_id: HashMap::new(),
             class_data: vec![],
-            class_data_by_id: AHashMap::new(),
-            class_data_by_serial_number: AHashMap::default(),
-            classes_single_instance_size_by_id: AHashMap::new(),
-            classes_all_instance_total_size_by_id: AHashMap::new(),
-            primitive_array_counters: AHashMap::new(),
-            object_array_counters: AHashMap::new(),
-            classes_dump: AHashMap::default(),
-            stack_trace_by_serial_number: AHashMap::default(),
-            stack_frame_by_id: AHashMap::default(),
+            class_data_by_id: HashMap::new(),
+            class_data_by_serial_number: HashMap::default(),
+            classes_single_instance_size_by_id: HashMap::new(),
+            classes_all_instance_total_size_by_id: HashMap::new(),
+            primitive_array_counters: HashMap::new(),
+            object_array_counters: HashMap::new(),
+            classes_dump: HashMap::default(),
+            stack_trace_by_serial_number: HashMap::default(),
+            stack_frame_by_id: HashMap::default(),
             dump_instances: Vec::default(),
             dump_primitive_array_dump: Vec::default(),
-            instances: AHashMap::default(),
-            load_class: AHashMap::default(),
+            instances: HashMap::default(),
+            load_class: HashMap::default(),
+            thread_start: HashMap::default(),
+            thread_end: HashMap::default(),
+            dump_object_array_dump: Vec::default(),
         }
     }
 
@@ -249,10 +257,43 @@ impl ResultRecorder {
                 self.stack_trace_by_serial_number
                     .insert(stack_trace_data.serial_number, mem::take(stack_trace_data));
             }
-            StartThread { .. } => self.start_threads += 1,
-            EndThread { .. } => self.end_threads += 1,
+            StartThread {
+                thread_serial_number,
+                thread_object_id,
+                stack_trace_serial_number,
+                thread_name_id,
+                thread_group_name_id,
+                thread_group_parent_name_id,
+            } => {
+                self.thread_start.insert(
+                    *thread_serial_number,
+                    ThreadStartData {
+                        thread_serial_number: *thread_serial_number,
+                        thread_object_id: *thread_object_id,
+                        stack_trace_serial_number: *stack_trace_serial_number,
+                        thread_name_id: *thread_name_id,
+                        thread_group_name_id: *thread_group_name_id,
+                        thread_group_parent_name_id: *thread_group_parent_name_id,
+                    },
+                );
+            }
+            EndThread {
+                thread_serial_number,
+            } => {
+                self.thread_end.insert(
+                    *thread_serial_number,
+                    ThreadEndData {
+                        thread_serial_number: *thread_serial_number,
+                    },
+                );
+            }
             AllocationSites { .. } => self.allocation_sites += 1,
-            HeapSummary { .. } => self.heap_summaries += 1,
+            HeapSummary {
+                total_live_bytes,
+                total_live_instances,
+                total_bytes_allocated,
+                total_instances_allocated,
+            } => self.heap_summaries += 1,
             ControlSettings { .. } => self.control_settings += 1,
             CpuSamples { .. } => self.cpu_samples += 1,
             HeapDumpEnd { .. } => (),
@@ -307,13 +348,22 @@ impl ResultRecorder {
                     GcRecord::ObjectArrayDump {
                         number_of_elements,
                         array_class_id,
-                        ..
+                        object_id,
+                        stack_trace_serial_number,
+                        data_bytes,
                     } => {
                         self.object_array_counters
                             .entry(*array_class_id)
                             .or_insert_with(ArrayCounter::empty)
                             .add_elements_from_array(*number_of_elements);
 
+                        self.dump_object_array_dump.push(GcRecord::ObjectArrayDump {
+                            number_of_elements: *number_of_elements,
+                            array_class_id: *array_class_id,
+                            object_id: *object_id,
+                            stack_trace_serial_number: *stack_trace_serial_number,
+                            data_bytes: data_bytes.to_vec(),
+                        });
                         self.heap_dump_segments_gc_object_array_dump += 1
                     }
                     GcRecord::PrimitiveArrayDump {

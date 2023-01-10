@@ -82,7 +82,7 @@ pub enum ArrayValue {
     Long(Vec<i64>),
     Float(Vec<f32>),
     Double(Vec<f64>),
-    //Object(Vec<u64>),
+    Object(Vec<u64>),
 }
 
 #[derive(Debug)]

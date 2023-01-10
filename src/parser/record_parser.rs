@@ -257,14 +257,15 @@ pub fn parse_field_value(ty: FieldType) -> impl Fn(&[u8]) -> IResult<&[u8], Fiel
     }
 }
 
-
 // could be used in the future to analyze content of largest arrays
 pub fn parse_array_value(
     element_type: FieldType,
     number_of_elements: u32,
 ) -> impl Fn(&[u8]) -> IResult<&[u8], ArrayValue> {
     move |i| match element_type {
-        FieldType::Object => panic!("object type in primitive array"),
+        FieldType::Object => map(count(parse_u64, number_of_elements as usize), |res| {
+            ArrayValue::Object(res)
+        })(i),
         FieldType::Bool => map(count(parse_u8, number_of_elements as usize), |res| {
             ArrayValue::Bool(res.iter().map(|b| *b != 0).collect())
         })(i),

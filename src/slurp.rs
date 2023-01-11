@@ -3,10 +3,10 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 
-use ahash::AHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crossbeam_channel::{Receiver, Sender};
+use log::info;
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::errors::HprofSlurpError;
@@ -35,7 +35,7 @@ pub fn slurp_file(file_path: String) -> Result<Heap, HprofSlurpError> {
     // Parse file header
     let header = slurp_header(&mut reader)?;
     let id_size = header.size_pointers;
-    println!(
+    info!(
         "Processing {} binary hprof file in '{}' format.",
         pretty_bytes_size(file_len as u64),
         header.format
@@ -127,7 +127,7 @@ pub fn slurp_file(file_path: String) -> Result<Heap, HprofSlurpError> {
     pb.set_position(99);
     pb.finish_and_clear();
     // Wait for final result
-    let mut result = receive_result
+    let result = receive_result
         .recv()
         .expect("result channel should be alive");
 
@@ -348,12 +348,12 @@ fn parse_instance(value: ResultRecorder) -> Heap {
 fn parse_instance_data(
     class: &ClassDumpFields,
     data_bytes: &[u8],
-    utf8_strings_by_id: &HashMap<u64, Box<str>>,
-    classes_dump: &HashMap<u64, ClassDumpFields>,
+    _utf8_strings_by_id: &HashMap<u64, Box<str>>,
+    _classes_dump: &HashMap<u64, ClassDumpFields>,
 ) -> (Vec<(u64, Values)>, Vec<(u64, Values)>) {
     let mut data_pt = data_bytes;
     let mut fields_with_name: Vec<(u64, Values)> = Vec::with_capacity(class.instance_fields.len());
-    let mut super_fields_with_name: Vec<(u64, Values)> = Vec::new();
+    let super_fields_with_name: Vec<(u64, Values)> = Vec::new();
     for fields in &class.instance_fields {
         // let name = if let Some(field_name) = utf8_strings_by_id.get(&fields.name_id) {
         //     field_name.to_string()
@@ -390,16 +390,16 @@ fn search_str(str: &str, result: &ResultRecorder) -> Option<u64> {
 }
 
 fn search_dump_class(name_str_id: u64, result: &ResultRecorder) -> Option<ClassDumpFields> {
-    if let Some((k, v)) = result
+    if let Some((_k, v)) = result
         .load_class
         .par_iter()
-        .find_first(|(k, v)| v.class_name_id == name_str_id)
+        .find_first(|(_k, v)| v.class_name_id == name_str_id)
     {
         let obj_id = v.class_object_id;
         if let Some((_, cdf)) = result
             .classes_dump
             .par_iter()
-            .find_first(|(k, v)| v.class_object_id == obj_id)
+            .find_first(|(_k, v)| v.class_object_id == obj_id)
         {
             Some(cdf.clone())
         } else {

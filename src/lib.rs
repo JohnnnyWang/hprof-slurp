@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ahash::AHashMap;
 use parser::{
     gc_record::ClassDumpFields,
     record::{LoadClassData, StackFrameData, StackTraceData},

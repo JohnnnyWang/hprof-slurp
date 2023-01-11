@@ -1,4 +1,3 @@
-use ahash::AHashMap;
 use crossbeam_channel::{Receiver, Sender};
 use indoc::formatdoc;
 
@@ -289,10 +288,10 @@ impl ResultRecorder {
             }
             AllocationSites { .. } => self.allocation_sites += 1,
             HeapSummary {
-                total_live_bytes,
-                total_live_instances,
-                total_bytes_allocated,
-                total_instances_allocated,
+                total_live_bytes: _,
+                total_live_instances: _,
+                total_bytes_allocated: _,
+                total_instances_allocated: _,
             } => self.heap_summaries += 1,
             ControlSettings { .. } => self.control_settings += 1,
             CpuSamples { .. } => self.cpu_samples += 1,

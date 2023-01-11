@@ -128,21 +128,21 @@ pub enum GcRecord {
         stack_trace_serial_number: u32,
         class_object_id: u64,
         data_size: u32,
-        data_bytes: Vec<u8>,
+        bytes_ref:Box<[u8]>
     },
     ObjectArrayDump {
         object_id: u64,
         stack_trace_serial_number: u32,
         number_of_elements: u32,
         array_class_id: u64,
-        data_bytes: Vec<u8>,
+        bytes_ref:Box<[u8]>
     },
     PrimitiveArrayDump {
         object_id: u64,
         stack_trace_serial_number: u32,
         number_of_elements: u32,
         element_type: FieldType,
-        data_bytes: Vec<u8>,
+        bytes_ref:Box<[u8]>
     },
     ClassDump(Box<ClassDumpFields>), // rare enough to be boxed to avoid large variant cost
 }

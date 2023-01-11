@@ -82,8 +82,8 @@ pub struct Instance {
     pub stack_trace_serial_number: u32,
     pub class_object_id: u64,
     pub data_size: u32,
-    pub fields: AHashMap<String, Values>,
-    pub super_fields: AHashMap<String, Values>,
+    pub fields: Vec<(u64, Values)>,
+    pub super_fields: Vec<(u64, Values)>,
 }
 
 pub struct ResultRecorder {
@@ -329,7 +329,7 @@ impl ResultRecorder {
                         stack_trace_serial_number,
                         class_object_id,
                         data_size,
-                        data_bytes,
+                        bytes_ref,
                     } => {
                         self.classes_all_instance_total_size_by_id
                             .entry(*class_object_id)
@@ -342,7 +342,7 @@ impl ResultRecorder {
                             stack_trace_serial_number: *stack_trace_serial_number,
                             class_object_id: *class_object_id,
                             data_size: *data_size,
-                            data_bytes: data_bytes.to_vec(),
+                            bytes_ref: bytes_ref.clone(),
                         });
                     }
                     GcRecord::ObjectArrayDump {
@@ -350,7 +350,7 @@ impl ResultRecorder {
                         array_class_id,
                         object_id,
                         stack_trace_serial_number,
-                        data_bytes,
+                        bytes_ref,
                     } => {
                         self.object_array_counters
                             .entry(*array_class_id)
@@ -362,7 +362,7 @@ impl ResultRecorder {
                             array_class_id: *array_class_id,
                             object_id: *object_id,
                             stack_trace_serial_number: *stack_trace_serial_number,
-                            data_bytes: data_bytes.to_vec(),
+                            bytes_ref: bytes_ref.clone(),
                         });
                         self.heap_dump_segments_gc_object_array_dump += 1
                     }
@@ -371,7 +371,7 @@ impl ResultRecorder {
                         element_type,
                         object_id,
                         stack_trace_serial_number,
-                        data_bytes,
+                        bytes_ref,
                     } => {
                         self.primitive_array_counters
                             .entry(*element_type)
@@ -386,7 +386,7 @@ impl ResultRecorder {
                                 element_type: *element_type,
                                 object_id: *object_id,
                                 stack_trace_serial_number: *stack_trace_serial_number,
-                                data_bytes: data_bytes.to_vec(),
+                                bytes_ref: bytes_ref.clone(),
                             });
                     }
                     GcRecord::ClassDump(class_dump_fields) => {

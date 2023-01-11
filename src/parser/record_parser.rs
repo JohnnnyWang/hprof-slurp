@@ -406,19 +406,22 @@ fn parse_gc_instance_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
     flat_map(
         tuple((parse_id, parse_u32, parse_id, parse_u32)),
         |(object_id, stack_trace_serial_number, class_object_id, data_size)| {
-            map(bytes::streaming::take(data_size), move |bytes_segment| {
-                // Important: The actual content of the instance cannot be analyzed at this point because we miss the class information!
-                // Given that instances are found before the class info in the dump file, it would require two passes on the
-                // dump file with the additional storage of intermediary results on the disk to fully analyze the instances.
-                // hprof-slurp performs a single pass and makes no assumptions on the memory or storage available.
-                InstanceDump {
-                    object_id,
-                    stack_trace_serial_number,
-                    class_object_id,
-                    data_size,
-                    data_bytes: Vec::from(bytes_segment),
-                }
-            })
+            map(
+                bytes::streaming::take(data_size),
+                move |bytes_segment: &[u8]| {
+                    // Important: The actual content of the instance cannot be analyzed at this point because we miss the class information!
+                    // Given that instances are found before the class info in the dump file, it would require two passes on the
+                    // dump file with the additional storage of intermediary results on the disk to fully analyze the instances.
+                    // hprof-slurp performs a single pass and makes no assumptions on the memory or storage available.
+                    InstanceDump {
+                        object_id,
+                        stack_trace_serial_number,
+                        class_object_id,
+                        data_size,
+                        bytes_ref: bytes_segment.into(),
+                    }
+                },
+            )
         },
     )(i)
 }
@@ -429,7 +432,7 @@ fn parse_gc_object_array_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
         |(object_id, stack_trace_serial_number, number_of_elements, array_class_id)| {
             map(
                 bytes::streaming::take(number_of_elements * ID_SIZE),
-                move |byte_array_elements| {
+                move |byte_array_elements: &[u8]| {
                     // Do not parse the array of object references as it is not needed for any analyses so far.
                     // see `count(parse_id, number_of_elements as usize)(byte_array_elements)`
                     ObjectArrayDump {
@@ -437,7 +440,7 @@ fn parse_gc_object_array_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
                         stack_trace_serial_number,
                         number_of_elements,
                         array_class_id,
-                        data_bytes: Vec::from(byte_array_elements),
+                        bytes_ref: byte_array_elements.into(),
                     }
                 },
             )
@@ -453,12 +456,12 @@ fn parse_gc_primitive_array_dump(i: &[u8]) -> IResult<&[u8], GcRecord> {
             // see `parse_array_value(element_type, number_of_elements)`
             map(
                 skip_array_value(element_type, number_of_elements),
-                move |data_array_elements| PrimitiveArrayDump {
+                move |data_array_elements: &[u8]| PrimitiveArrayDump {
                     object_id,
                     stack_trace_serial_number,
                     number_of_elements,
                     element_type,
-                    data_bytes: Vec::from(data_array_elements),
+                    bytes_ref: data_array_elements.into(),
                 },
             )
         },

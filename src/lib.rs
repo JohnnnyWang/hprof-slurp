@@ -1,4 +1,4 @@
-use std::{sync::Arc, collections::HashMap};
+use std::{collections::HashMap, sync::Arc};
 
 use ahash::AHashMap;
 use parser::{
@@ -15,7 +15,7 @@ pub mod result_recorder;
 pub mod slurp;
 pub mod utils;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Heap {
     pub counter: HeapCounter,
 
@@ -26,7 +26,7 @@ pub struct Heap {
     pub stack_frame_by_id: HashMap<u64, StackFrameData>,
     pub instances_pool: HashMap<u64, Arc<Instance>>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HeapCounter {
     pub id_size: u32,
     // Tag counters

@@ -7,7 +7,7 @@ use ahash::AHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crossbeam_channel::{Receiver, Sender};
-use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::errors::HprofSlurpError;
 use crate::errors::HprofSlurpError::*;
@@ -19,13 +19,13 @@ use crate::parser::record_stream_parser::HprofRecordStreamParser;
 use crate::prefetch_reader::PrefetchReader;
 use crate::result_recorder::{Instance, ResultRecorder};
 use crate::utils::pretty_bytes_size;
-use crate::Heap;
+use crate::{Heap, HeapCounter};
 
 // the exact size of the file header (31 bytes)
 const FILE_HEADER_LENGTH: usize = 31;
 
 // 64 MB buffer performs nicely (higher is faster but increases the memory consumption)
-pub const READ_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+pub const READ_BUFFER_SIZE: usize = 128 * 1024 * 1024;
 
 pub fn slurp_file(file_path: String) -> Result<Heap, HprofSlurpError> {
     let file = File::open(file_path)?;
@@ -110,22 +110,6 @@ pub fn slurp_file(file_path: String) -> Result<Heap, HprofSlurpError> {
     while let Ok(processed) = receive_progress.recv() {
         pb.set_position(processed as u64)
     }
-
-    pb.set_position(99);
-    pb.finish_and_clear();
-    // Wait for final result
-    let mut result = receive_result
-        .recv()
-        .expect("result channel should be alive");
-
-    println!("Parse instance");
-    parse_instance(&mut result);
-
-    println!("Parse instance done... parse vm overview");
-    parser_vm_overview(&result);
-    println!("Parse vm overview done...");
-
-    // Blocks until pre-fetcher is done
     prefetch_thread
         .join()
         .map_err(|e| HprofSlurpError::StdThreadError { e })?;
@@ -140,9 +124,22 @@ pub fn slurp_file(file_path: String) -> Result<Heap, HprofSlurpError> {
         .join()
         .map_err(|e| HprofSlurpError::StdThreadError { e })?;
 
+    pb.set_position(99);
+    pb.finish_and_clear();
+    // Wait for final result
+    let mut result = receive_result
+        .recv()
+        .expect("result channel should be alive");
+
+    let result = parse_instance(result);
+
+    // parser_vm_overview(&result);
+
+    // Blocks until pre-fetcher is done
+
     // Finish and remove progress bar
 
-    Ok(result.into())
+    Ok(result)
 }
 
 //TODO: support 32bits
@@ -187,31 +184,69 @@ fn parser_vm_overview(result: &ResultRecorder) {
     }
 }
 
-fn parse_instance(result: &mut ResultRecorder) {
-    let instance: HashMap<u64, Arc<Instance>> = result
+fn parse_instance(value: ResultRecorder) -> Heap {
+    let mut heap = Heap::default();
+
+    let counter = HeapCounter {
+        id_size: value.id_size,
+        classes_unloaded: value.classes_unloaded,
+        stack_frames: value.stack_frames,
+        stack_traces: value.stack_traces,
+        start_threads: value.start_threads,
+        end_threads: value.end_threads,
+        heap_summaries: value.heap_summaries,
+        heap_dumps: value.heap_dumps,
+        allocation_sites: value.allocation_sites,
+        control_settings: value.control_settings,
+        cpu_samples: value.cpu_samples,
+        heap_dump_segments_all_sub_records: value.heap_dump_segments_all_sub_records,
+        heap_dump_segments_gc_root_unknown: value.heap_dump_segments_gc_root_unknown,
+        heap_dump_segments_gc_root_thread_object: value.heap_dump_segments_gc_root_thread_object,
+        heap_dump_segments_gc_root_jni_global: value.heap_dump_segments_gc_root_jni_global,
+        heap_dump_segments_gc_root_jni_local: value.heap_dump_segments_gc_root_jni_local,
+        heap_dump_segments_gc_root_java_frame: value.heap_dump_segments_gc_root_java_frame,
+        heap_dump_segments_gc_root_native_stack: value.heap_dump_segments_gc_root_native_stack,
+        heap_dump_segments_gc_root_sticky_class: value.heap_dump_segments_gc_root_sticky_class,
+        heap_dump_segments_gc_root_thread_block: value.heap_dump_segments_gc_root_thread_block,
+        heap_dump_segments_gc_root_monitor_used: value.heap_dump_segments_gc_root_monitor_used,
+        heap_dump_segments_gc_object_array_dump: value.heap_dump_segments_gc_object_array_dump,
+        heap_dump_segments_gc_instance_dump: value.heap_dump_segments_gc_instance_dump,
+        heap_dump_segments_gc_primitive_array_dump: value
+            .heap_dump_segments_gc_primitive_array_dump,
+        heap_dump_segments_gc_class_dump: value.heap_dump_segments_gc_class_dump,
+    };
+
+    heap.counter = counter;
+
+    let instance: HashMap<u64, Arc<Instance>> = value
         .dump_instances
-        .par_iter()
+        .into_par_iter()
         .map(|ele| {
             if let GcRecord::InstanceDump {
                 object_id,
                 stack_trace_serial_number,
                 class_object_id,
                 data_size,
-                data_bytes,
+                bytes_ref,
             } = ele
             {
-                if let Some(class) = result.classes_dump.get(class_object_id) {
-                    let (a, b) = parse_instance_data(class, data_bytes, result);
+                if let Some(class) = value.classes_dump.get(&class_object_id) {
+                    let (a, b) = parse_instance_data(
+                        class,
+                        &bytes_ref,
+                        &value.utf8_strings_by_id,
+                        &value.classes_dump,
+                    );
 
                     let instance = Instance {
-                        object_id: *object_id,
-                        stack_trace_serial_number: *stack_trace_serial_number,
-                        class_object_id: *class_object_id,
-                        data_size: *data_size,
+                        object_id,
+                        stack_trace_serial_number,
+                        class_object_id,
+                        data_size,
                         fields: a,
                         super_fields: b,
                     };
-                    Some((*object_id, Arc::new(instance)))
+                    Some((object_id, Arc::new(instance)))
                 } else {
                     None
                 }
@@ -223,33 +258,34 @@ fn parse_instance(result: &mut ResultRecorder) {
         .map(|e| e.unwrap())
         .collect();
 
-    let instance_primitive_array_dump: HashMap<u64, Arc<Instance>> = result
+    let instance_primitive_array_dump: HashMap<u64, Arc<Instance>> = value
         .dump_primitive_array_dump
-        .par_iter()
+        .into_par_iter()
         .map(|ele| {
             if let GcRecord::PrimitiveArrayDump {
                 object_id,
                 stack_trace_serial_number,
                 number_of_elements,
                 element_type,
-                data_bytes,
+                bytes_ref,
             } = ele
             {
                 let (_, value) =
-                    parse_array_value(element_type.clone(), *number_of_elements)(&data_bytes)
+                    parse_array_value(element_type.clone(), number_of_elements)(&bytes_ref)
                         .unwrap();
-                let mut fields = AHashMap::default();
-                fields.insert("".to_string(), Values::Array(value));
+                let mut fields = Vec::default();
+                fields.push((0, Values::Array(value)));
 
                 let instance = Instance {
-                    object_id: *object_id,
-                    stack_trace_serial_number: *stack_trace_serial_number,
+                    object_id,
+                    stack_trace_serial_number,
                     class_object_id: element_type.to_u64(),
-                    data_size: data_bytes.len() as u32,
+                    data_size: bytes_ref.len() as u32,
                     fields,
-                    super_fields: AHashMap::default(),
+                    super_fields: Vec::default(),
                 };
-                Some((*object_id, Arc::new(instance)))
+                drop(bytes_ref);
+                Some((object_id, Arc::new(instance)))
             } else {
                 None
             }
@@ -258,35 +294,37 @@ fn parse_instance(result: &mut ResultRecorder) {
         .map(|e| e.unwrap())
         .collect();
 
-    let instance_object_array_dump: HashMap<u64, Arc<Instance>> = result
+    let instance_object_array_dump: HashMap<u64, Arc<Instance>> = value
         .dump_object_array_dump
-        .par_iter()
+        .into_par_iter()
         .map(|ele| {
             if let GcRecord::ObjectArrayDump {
                 object_id,
                 stack_trace_serial_number,
                 number_of_elements,
                 array_class_id,
-                data_bytes,
+                bytes_ref,
             } = ele
             {
                 let (_, value) = parse_array_value(
                     crate::parser::gc_record::FieldType::Object,
-                    *number_of_elements,
-                )(&data_bytes)
+                    number_of_elements,
+                )(&bytes_ref)
                 .unwrap();
-                let mut fields = AHashMap::default();
-                fields.insert("".to_string(), Values::Array(value));
+                let mut fields = Vec::default();
+                fields.push((0, Values::Array(value)));
 
                 let instance = Instance {
-                    object_id: *object_id,
-                    stack_trace_serial_number: *stack_trace_serial_number,
-                    class_object_id: *array_class_id,
-                    data_size: data_bytes.len() as u32,
+                    object_id,
+                    stack_trace_serial_number,
+                    class_object_id: array_class_id,
+                    data_size: bytes_ref.len() as u32,
                     fields,
-                    super_fields: AHashMap::default(),
+                    super_fields: Vec::with_capacity(0),
                 };
-                Some((*object_id, Arc::new(instance)))
+
+                drop(bytes_ref);
+                Some((object_id, Arc::new(instance)))
             } else {
                 None
             }
@@ -294,38 +332,47 @@ fn parse_instance(result: &mut ResultRecorder) {
         .filter(|e| e.is_some())
         .map(|e| e.unwrap())
         .collect();
-    result.instances = HashMap::from_iter(instance);
-    result.instances.extend(instance_primitive_array_dump);
-    result.instances.extend(instance_object_array_dump);
+    heap.instances_pool.extend(instance);
+    heap.instances_pool.extend(instance_primitive_array_dump);
+    heap.instances_pool.extend(instance_object_array_dump);
+
+    heap.utf8_strings = value.utf8_strings_by_id;
+    heap.class_data = value.load_class;
+    heap.classes_dump = value.classes_dump;
+    heap.stack_frame_by_id = value.stack_frame_by_id;
+    heap.stack_trace_by_serial_number = value.stack_trace_by_serial_number;
+
+    heap
 }
 
 fn parse_instance_data(
     class: &ClassDumpFields,
     data_bytes: &[u8],
-    result: &ResultRecorder,
-) -> (AHashMap<String, Values>, AHashMap<String, Values>) {
+    utf8_strings_by_id: &HashMap<u64, Box<str>>,
+    classes_dump: &HashMap<u64, ClassDumpFields>,
+) -> (Vec<(u64, Values)>, Vec<(u64, Values)>) {
     let mut data_pt = data_bytes;
-    let mut fields_with_name: AHashMap<String, Values> = AHashMap::new();
-    let mut super_fields_with_name: AHashMap<String, Values> = AHashMap::new();
+    let mut fields_with_name: Vec<(u64, Values)> = Vec::with_capacity(class.instance_fields.len());
+    let mut super_fields_with_name: Vec<(u64, Values)> = Vec::new();
     for fields in &class.instance_fields {
-        let name = if let Some(field_name) = result.utf8_strings_by_id.get(&fields.name_id) {
-            field_name.to_string()
-        } else {
-            "UNKNOWN".to_string()
-        };
+        // let name = if let Some(field_name) = utf8_strings_by_id.get(&fields.name_id) {
+        //     field_name.to_string()
+        // } else {
+        //     "UNKNOWN".to_string()
+        // };
 
         let parser = parse_field_value(fields.field_type);
         let (remaining, value) = parser(data_pt).unwrap();
         data_pt = remaining;
-        fields_with_name.insert(name, Values::Single(value));
+        fields_with_name.push((fields.name_id, Values::Single(value)));
     }
 
     //super class, merged
-    if let Some(super_class) = result.classes_dump.get(&class.super_class_object_id) {
-        let (this, s) = parse_instance_data(super_class, data_pt, result);
-        super_fields_with_name.extend(this);
-        super_fields_with_name.extend(s);
-    }
+    // if let Some(super_class) = classes_dump.get(&class.super_class_object_id) {
+    //     let (this, s) = parse_instance_data(super_class, data_pt, utf8_strings_by_id, classes_dump);
+    //     super_fields_with_name.extend(this);
+    //     super_fields_with_name.extend(s);
+    // }
 
     (fields_with_name, super_fields_with_name)
 }

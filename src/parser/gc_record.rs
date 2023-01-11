@@ -26,7 +26,7 @@ impl FieldType {
             x => panic!("{}", format!("FieldType {} not found", x)),
         }
     }
-    pub fn to_u64(&self)->u64{
+    pub fn to_u64(&self) -> u64 {
         match self {
             FieldType::Object => 2,
             FieldType::Bool => 4,
@@ -39,8 +39,6 @@ impl FieldType {
             FieldType::Long => 11,
         }
     }
-
-    
 }
 
 #[derive(Debug, Clone)]
@@ -128,21 +126,21 @@ pub enum GcRecord {
         stack_trace_serial_number: u32,
         class_object_id: u64,
         data_size: u32,
-        bytes_ref:Box<[u8]>
+        bytes_ref: Box<[u8]>,
     },
     ObjectArrayDump {
         object_id: u64,
         stack_trace_serial_number: u32,
         number_of_elements: u32,
         array_class_id: u64,
-        bytes_ref:Box<[u8]>
+        bytes_ref: Box<[u8]>,
     },
     PrimitiveArrayDump {
         object_id: u64,
         stack_trace_serial_number: u32,
         number_of_elements: u32,
         element_type: FieldType,
-        bytes_ref:Box<[u8]>
+        bytes_ref: Box<[u8]>,
     },
     ClassDump(Box<ClassDumpFields>), // rare enough to be boxed to avoid large variant cost
 }

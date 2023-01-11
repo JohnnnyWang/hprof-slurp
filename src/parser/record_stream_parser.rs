@@ -90,7 +90,6 @@ impl HprofRecordStreamParser {
                                     }
                                 }
                                 Err(Err::Incomplete(Size(n))) => {
-                                
                                     // capture needed data (missing + existing)
                                     self.needed = n.get() + self.loop_buffer.len();
                                 }

@@ -341,6 +341,9 @@ fn parse_instance(value: ResultRecorder) -> Heap {
     heap.classes_dump = value.classes_dump;
     heap.stack_frame_by_id = value.stack_frame_by_id;
     heap.stack_trace_by_serial_number = value.stack_trace_by_serial_number;
+    heap.root_jni_global = value.root_jni_global;
+    heap.root_jni_local = value.root_jni_local;
+    heap.root_thread_object = value.root_thread_object;
 
     heap
 }
@@ -354,17 +357,17 @@ fn parse_instance_data(
     let mut data_pt = data_bytes;
     let mut fields_with_name: Vec<(u64, Values)> = Vec::with_capacity(class.instance_fields.len());
     let super_fields_with_name: Vec<(u64, Values)> = Vec::new();
-    for fields in &class.instance_fields {
+    for field in &class.instance_fields {
         // let name = if let Some(field_name) = utf8_strings_by_id.get(&fields.name_id) {
         //     field_name.to_string()
         // } else {
         //     "UNKNOWN".to_string()
         // };
 
-        let parser = parse_field_value(fields.field_type);
+        let parser = parse_field_value(field.field_type);
         let (remaining, value) = parser(data_pt).unwrap();
         data_pt = remaining;
-        fields_with_name.push((fields.name_id, Values::Single(value)));
+        fields_with_name.push((field.name_id, Values::Single(value)));
     }
 
     //super class, merged

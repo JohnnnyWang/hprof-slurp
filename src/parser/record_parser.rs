@@ -175,10 +175,12 @@ fn parse_gc_root_unknown(i: &[u8]) -> IResult<&[u8], GcRecord> {
 fn parse_gc_root_thread_object(i: &[u8]) -> IResult<&[u8], GcRecord> {
     map(
         tuple((parse_id, parse_u32, parse_u32)),
-        |(thread_object_id, thread_sequence_number, stack_sequence_number)| RootThreadObject {
-            thread_object_id,
-            thread_sequence_number,
-            stack_sequence_number,
+        |(thread_object_id, thread_sequence_number, stack_sequence_number)| {
+            GcRecord::RootThreadObject {
+                thread_object_id,
+                thread_sequence_number,
+                stack_sequence_number,
+            }
         },
     )(i)
 }
@@ -186,7 +188,7 @@ fn parse_gc_root_thread_object(i: &[u8]) -> IResult<&[u8], GcRecord> {
 fn parse_gc_root_jni_global(i: &[u8]) -> IResult<&[u8], GcRecord> {
     map(
         tuple((parse_id, parse_id)),
-        |(object_id, jni_global_ref_id)| RootJniGlobal {
+        |(object_id, jni_global_ref_id)| GcRecord::RootJniGlobal {
             object_id,
             jni_global_ref_id,
         },
@@ -196,7 +198,7 @@ fn parse_gc_root_jni_global(i: &[u8]) -> IResult<&[u8], GcRecord> {
 fn parse_gc_root_jni_local(i: &[u8]) -> IResult<&[u8], GcRecord> {
     map(
         tuple((parse_id, parse_u32, parse_u32)),
-        |(object_id, thread_serial_number, frame_number_in_stack_trace)| RootJniLocal {
+        |(object_id, thread_serial_number, frame_number_in_stack_trace)| GcRecord::RootJniLocal {
             object_id,
             thread_serial_number,
             frame_number_in_stack_trace,

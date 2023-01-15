@@ -4,7 +4,7 @@ use parser::{
     gc_record::ClassDumpFields,
     record::{LoadClassData, StackFrameData, StackTraceData},
 };
-use result_recorder::{Instance, ResultRecorder};
+use result_recorder::{Instance, ResultRecorder, RootJniGlobal, RootJniLocal, RootThreadObject};
 
 pub mod args;
 pub mod errors;
@@ -24,6 +24,9 @@ pub struct Heap {
     pub stack_trace_by_serial_number: HashMap<u32, StackTraceData>,
     pub stack_frame_by_id: HashMap<u64, StackFrameData>,
     pub instances_pool: HashMap<u64, Arc<Instance>>,
+    pub root_thread_object: HashMap<u64, RootThreadObject>,
+    pub root_jni_local: HashMap<u64, RootJniLocal>,
+    pub root_jni_global: HashMap<u64, RootJniGlobal>,
 }
 #[derive(Debug, Clone, Default)]
 pub struct HeapCounter {
@@ -95,6 +98,9 @@ impl From<ResultRecorder> for Heap {
             stack_trace_by_serial_number: value.stack_trace_by_serial_number,
             stack_frame_by_id: value.stack_frame_by_id,
             instances_pool: value.instances,
+            root_jni_global: value.root_jni_global,
+            root_jni_local: value.root_jni_local,
+            root_thread_object: value.root_thread_object,
         }
     }
 }

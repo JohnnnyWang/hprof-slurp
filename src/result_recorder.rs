@@ -1,5 +1,6 @@
 use crossbeam_channel::{Receiver, Sender};
 use indoc::formatdoc;
+use log::info;
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -68,7 +69,23 @@ impl ArrayCounter {
         }
     }
 }
-
+#[derive(Debug, Clone)]
+pub struct RootThreadObject {
+    pub thread_object_id: u64,
+    pub thread_sequence_number: u32,
+    pub stack_sequence_number: u32,
+}
+#[derive(Debug, Clone)]
+pub struct RootJniGlobal {
+    pub object_id: u64,
+    pub jni_global_ref_id: u64,
+}
+#[derive(Debug, Clone)]
+pub struct RootJniLocal {
+    pub object_id: u64,
+    pub thread_serial_number: u32,
+    pub frame_number_in_stack_trace: u32,
+}
 pub struct RenderedResult {
     pub summary: String,
     pub thread_info: String,
@@ -135,8 +152,9 @@ pub struct ResultRecorder {
 
     pub load_class: HashMap<u64, LoadClassData>,
 
-    pub thread_start: HashMap<u32, ThreadStartData>,
-    pub thread_end: HashMap<u32, ThreadEndData>,
+    pub root_thread_object: HashMap<u64, RootThreadObject>,
+    pub root_jni_local: HashMap<u64, RootJniLocal>,
+    pub root_jni_global: HashMap<u64, RootJniGlobal>,
 }
 
 impl ResultRecorder {
@@ -182,8 +200,9 @@ impl ResultRecorder {
             dump_primitive_array_dump: Vec::default(),
             instances: HashMap::default(),
             load_class: HashMap::default(),
-            thread_start: HashMap::default(),
-            thread_end: HashMap::default(),
+            root_jni_global: HashMap::default(),
+            root_jni_local: HashMap::default(),
+            root_thread_object: HashMap::default(),
             dump_object_array_dump: Vec::default(),
         }
     }
@@ -264,27 +283,27 @@ impl ResultRecorder {
                 thread_group_name_id,
                 thread_group_parent_name_id,
             } => {
-                self.thread_start.insert(
-                    *thread_serial_number,
-                    ThreadStartData {
-                        thread_serial_number: *thread_serial_number,
-                        thread_object_id: *thread_object_id,
-                        stack_trace_serial_number: *stack_trace_serial_number,
-                        thread_name_id: *thread_name_id,
-                        thread_group_name_id: *thread_group_name_id,
-                        thread_group_parent_name_id: *thread_group_parent_name_id,
-                    },
-                );
+                // self.thread_start.insert(
+                //     *thread_serial_number,
+                //     ThreadStartData {
+                //         thread_serial_number: *thread_serial_number,
+                //         thread_object_id: *thread_object_id,
+                //         stack_trace_serial_number: *stack_trace_serial_number,
+                //         thread_name_id: *thread_name_id,
+                //         thread_group_name_id: *thread_group_name_id,
+                //         thread_group_parent_name_id: *thread_group_parent_name_id,
+                //     },
+                // );
             }
             EndThread {
                 thread_serial_number,
             } => {
-                self.thread_end.insert(
-                    *thread_serial_number,
-                    ThreadEndData {
-                        thread_serial_number: *thread_serial_number,
-                    },
-                );
+                // self.thread_end.insert(
+                //     *thread_serial_number,
+                //     ThreadEndData {
+                //         thread_serial_number: *thread_serial_number,
+                //     },
+                // );
             }
             AllocationSites { .. } => self.allocation_sites += 1,
             HeapSummary {
@@ -301,13 +320,49 @@ impl ResultRecorder {
                 self.heap_dump_segments_all_sub_records += 1;
                 match gc_record {
                     GcRecord::RootUnknown { .. } => self.heap_dump_segments_gc_root_unknown += 1,
-                    GcRecord::RootThreadObject { .. } => {
-                        self.heap_dump_segments_gc_root_thread_object += 1
+                    GcRecord::RootThreadObject {
+                        thread_object_id,
+                        thread_sequence_number,
+                        stack_sequence_number,
+                    } => {
+                        self.heap_dump_segments_gc_root_thread_object += 1;
+                        self.root_thread_object.insert(
+                            *thread_object_id,
+                            RootThreadObject {
+                                thread_object_id: *thread_object_id,
+                                thread_sequence_number: *thread_sequence_number,
+                                stack_sequence_number: *stack_sequence_number,
+                            },
+                        );
                     }
-                    GcRecord::RootJniGlobal { .. } => {
-                        self.heap_dump_segments_gc_root_jni_global += 1
+                    GcRecord::RootJniGlobal {
+                        object_id,
+                        jni_global_ref_id,
+                    } => {
+                        self.heap_dump_segments_gc_root_jni_global += 1;
+                        self.root_jni_global.insert(
+                            *object_id,
+                            RootJniGlobal {
+                                object_id: *object_id,
+                                jni_global_ref_id: *jni_global_ref_id,
+                            },
+                        );
                     }
-                    GcRecord::RootJniLocal { .. } => self.heap_dump_segments_gc_root_jni_local += 1,
+                    GcRecord::RootJniLocal {
+                        object_id,
+                        thread_serial_number,
+                        frame_number_in_stack_trace,
+                    } => {
+                        self.heap_dump_segments_gc_root_jni_local += 1;
+                        self.root_jni_local.insert(
+                            *object_id,
+                            RootJniLocal {
+                                object_id: *object_id,
+                                thread_serial_number: *thread_serial_number,
+                                frame_number_in_stack_trace: *frame_number_in_stack_trace,
+                            },
+                        );
+                    }
                     GcRecord::RootJavaFrame { .. } => {
                         self.heap_dump_segments_gc_root_java_frame += 1
                     }

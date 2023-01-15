@@ -145,6 +145,7 @@ pub enum GcRecord {
     ClassDump(Box<ClassDumpFields>), // rare enough to be boxed to avoid large variant cost
 }
 
+
 #[derive(Debug, Clone)]
 pub struct ClassDumpFields {
     pub class_object_id: u64,
